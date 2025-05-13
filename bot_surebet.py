@@ -1,59 +1,79 @@
 import os
 import requests
-from telegram import Bot
-from telegram.ext import Updater, CommandHandler
+import time
+import telegram
+from decimal import Decimal, ROUND_HALF_UP
 
-# Acessar as variáveis de ambiente para o token do bot e a chave da API de odds
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')  # Token do bot do Telegram
-ODDS_API_KEY = os.getenv('ODDS_API_KEY')  # Chave da API de odds
+# Tokens e chaves (use variáveis de ambiente no Render)
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+ODDS_API_KEY = os.getenv("ODDS_API_KEY")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")  # você pode setar fixo ou usar seu próprio ID
 
-# Verifique se as variáveis de ambiente estão configuradas corretamente
-if TELEGRAM_BOT_TOKEN is None or ODDS_API_KEY is None:
-    print("Erro: As variáveis de ambiente TELEGRAM_BOT_TOKEN ou ODDS_API_KEY não estão configuradas.")
-    exit(1)
+bot = telegram.Bot(token=TELEGRAM_TOKEN)
 
-# Função para enviar mensagem ao Telegram
-def start(update, context):
-    update.message.reply_text("Olá! Eu sou o bot de Surebet! Eu vou te ajudar a encontrar as melhores odds!")
+# Função para calcular surebet
+def calcular_surebet(odds1, odds2):
+    prob1 = 1 / odds1
+    prob2 = 1 / odds2
+    total_prob = prob1 + prob2
+    lucro = (1 - total_prob) * 100
+    return lucro if lucro > 0 else 0
 
-# Função para verificar as odds e calcular a surebet
-def check_surebet(update, context):
-    # Aqui você pode fazer uma chamada para a API de odds e comparar as odds entre as casas
+# Função para buscar e comparar odds
+def buscar_surebets():
+    url = f"https://api.the-odds-api.com/v4/sports/?apiKey={ODDS_API_KEY}"
+    response = requests.get(url)
+    sports = response.json()
+
+    for sport in sports:
+        if sport['key'] not in ['soccer', 'basketball']:
+            continue
+
+        odds_url = f"https://api.the-odds-api.com/v4/sports/{sport['key']}/odds/?regions=eu&markets=h2h&oddsFormat=decimal&apiKey={ODDS_API_KEY}"
+        res = requests.get(odds_url)
+        if res.status_code != 200:
+            continue
+
+        data = res.json()
+        for game in data:
+            if len(game['bookmakers']) < 2:
+                continue
+
+            # Seleciona Betano e Bet365
+            casas = {bk['title']: bk for bk in game['bookmakers'] if bk['title'] in ['Bet365', 'Betano']}
+            if len(casas) < 2:
+                continue
+
+            betano_odds = casas['Betano']['markets'][0]['outcomes']
+            bet365_odds = casas['Bet365']['markets'][0]['outcomes']
+
+            for i in range(2):  # Comparar as duas odds (por ex: Time A e Time B)
+                odd1 = betano_odds[i]['price']
+                odd2 = bet365_odds[1 - i]['price']
+
+                lucro = calcular_surebet(odd1, odd2)
+                if lucro > 1:  # Enviar apenas se o lucro for significativo
+                    mensagem = f"""
+*SUREBET DETECTADA!*
+
+Evento: {game['teams'][0]} x {game['teams'][1]}
+Mercado: 1X2 (Resultado final)
+
+Odds:
+- {betano_odds[i]['name']} na *Betano*: {odd1}
+- {bet365_odds[1 - i]['name']} na *Bet365*: {odd2}
+
+Lucro garantido: {Decimal(lucro).quantize(Decimal('.01'), rounding=ROUND_HALF_UP)}%
+
+Aposte rápido!
+"""
+                    bot.send_message(chat_id=CHAT_ID, text=mensagem, parse_mode=telegram.constants.ParseMode.MARKDOWN)
+
+# Loop principal
+while True:
     try:
-        # Exemplo de como pegar as odds da API (isso depende de como a API funciona)
-        url = f"https://api.exemplo.com/odds?api_key={ODDS_API_KEY}"  # Substitua pela URL correta da API
-        response = requests.get(url)
-        data = response.json()
-
-        # Logica para verificar as odds e encontrar a surebet
-        # Exemplo simplificado (depende da estrutura da resposta da API)
-        odds_betano = data['betano']['odds']
-        odds_bet365 = data['bet365']['odds']
-        
-        # Exemplo de cálculo simplificado para localizar uma surebet (apenas um exemplo)
-        if odds_betano > odds_bet365:
-            message = f"A melhor odd está na Betano: {odds_betano}"
-        else:
-            message = f"A melhor odd está na Bet365: {odds_bet365}"
-
-        update.message.reply_text(message)
-    
+        buscar_surebets()
+        time.sleep(60)  # Espera 60 segundos antes da próxima verificação
     except Exception as e:
-        update.message.reply_text(f"Ocorreu um erro: {str(e)}")
-
-# Função para iniciar o bot
-def main():
-    # Criar o updater e o dispatcher
-    updater = Updater(TELEGRAM_BOT_TOKEN, use_context=True)
-    dp = updater.dispatcher
-
-    # Adicionar handlers para comandos do Telegram
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("check_surebet", check_surebet))
-
-    # Iniciar o bot
-    updater.start_polling()
-    updater.idle()
-
-if _name_ == '_main_':
-    main()
+        print(f"Erro: {e}")
+        time.sleep(30)
