@@ -1,8 +1,13 @@
-
 services:
   - type: web
-    name: bot-surebet
-    env: python
+    name: surebet-bot
+    runtime: python
     buildCommand: ""
     startCommand: python bot_surebet.py
-    plan: free
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        value: 7162468527:AAH2dr4DE_DM0s1fL-I97GgAyNN0Uo7dzF0
+      - key: ODDS_API_KEY
+        value: cd7d10ad2ffa5ace542fc0ffa0b16c07
+      - key: TELEGRAM_CHAT_ID
+        value: 7534646862
